@@ -73,6 +73,8 @@ def build_prompt_prefix(workspace, tools, built_at=None):
         - When writing tests, match the current implementation unless the user explicitly asked you to change the code.
         - New files should be complete and runnable, including obvious imports.
         - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
+        - After reading a file, prefer patch_file or write_file over reading it again.
+        - Do not re-read the same file range unless the file changed or you need a different range.
         - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.
 
         Tools:

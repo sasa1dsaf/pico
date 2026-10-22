@@ -59,6 +59,9 @@ class AgentLoop:
             prompt_cache_key = prompt_metadata.get("prompt_cache_key")
             prompt_cache_retention = "in_memory"
         model_started_at = time.monotonic()
+        agent.emit_progress(
+            f"[pico] waiting for model (attempt {task_state.attempts}, step {task_state.tool_steps}, purpose={purpose})..."
+        )
         try:
             raw = agent.model_client.complete(
                 prompt,
@@ -86,13 +89,19 @@ class AgentLoop:
                 "Do not explain or plan; reply with exactly one <tool>...</tool> call "
                 "or one <final>...</final> answer"
             )
+        duration_ms = int((time.monotonic() - model_started_at) * 1000)
+        output_tokens = completion_metadata.get("output_tokens")
+        token_suffix = f" ({output_tokens} tokens)" if output_tokens else ""
+        agent.emit_progress(
+            f"[pico] model responded in {duration_ms / 1000:.1f}s{token_suffix}"
+        )
         agent.emit_trace(
             task_state,
             "model_parsed",
             {
                 "kind": kind,
                 "completion_metadata": completion_metadata,
-                "duration_ms": int((time.monotonic() - model_started_at) * 1000),
+                "duration_ms": duration_ms,
                 "purpose": purpose,
             },
         )
@@ -219,13 +228,14 @@ class AgentLoop:
             )
 
             if kind == "tool":
-                tool_steps += 1
                 name = payload.get("name", "")
                 args = payload.get("args", {})
-                task_state.record_tool(name)
                 tool_started_at = time.monotonic()
                 tool_result = agent.execute_tool(name, args)
                 result = tool_result.content
+                if (tool_result.metadata or {}).get("tool_status") != "rejected":
+                    tool_steps += 1
+                    task_state.record_tool(name)
                 agent.record(
                     {
                         "role": "tool",

@@ -9,7 +9,7 @@ import subprocess
 import textwrap
 from functools import partial
 
-from .workspace import IGNORED_PATH_NAMES
+from .workspace import IGNORED_PATH_NAMES, READ_FILE_OUTPUT_CHARS
 
 BASE_TOOL_SPECS = {
     "list_files": {
@@ -176,8 +176,47 @@ def tool_read_file(context, args):
     if start < 1 or end < start:
         raise ValueError("invalid line range")
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    body = "\n".join(f"{number:>4}: {line}" for number, line in enumerate(lines[start - 1:end], start=start))
-    return f"# {path.relative_to(context.root)}\n{body}"
+    relative_path = path.relative_to(context.root)
+    total = len(lines)
+    if total == 0:
+        return f"# {relative_path} (empty file)"
+    if start > total:
+        return f"# {relative_path} (file has {total} lines; start={start} is out of range)"
+
+    end = min(end, total)
+    header = f"# {relative_path} (lines {start}-{end} of {total})"
+    numbered = [
+        f"{number:>4}: {line}"
+        for number, line in enumerate(lines[start - 1:end], start=start)
+    ]
+    result = header + "\n" + "\n".join(numbered)
+    if len(result) <= READ_FILE_OUTPUT_CHARS:
+        return result
+
+    # Reserve room for the continuation marker so the model knows where to resume.
+    budget = max(1, READ_FILE_OUTPUT_CHARS - 160)
+    kept = []
+    used = len(header) + 1
+    for number, line in enumerate(numbered, start=start):
+        addition = len(line) + 1
+        if used + addition > budget:
+            break
+        kept.append(line)
+        used += addition
+
+    if not kept:
+        marker = (
+            f"...[truncated; line {start} is too long to include; "
+            f"continue with start={start + 1}]"
+        )
+        return (header + "\n" + marker)[:READ_FILE_OUTPUT_CHARS]
+
+    last = start + len(kept) - 1
+    marker = (
+        f"...[truncated; showing lines {start}-{last} of {total}; "
+        f"continue with start={last + 1}]"
+    )
+    return header + "\n" + "\n".join(kept) + "\n" + marker
 
 
 def tool_search(context, args):

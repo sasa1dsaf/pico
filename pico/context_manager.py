@@ -10,19 +10,21 @@ import json
 from dataclasses import dataclass
 
 
-DEFAULT_TOTAL_BUDGET = 12000
+DEFAULT_TOTAL_BUDGET = 128000
 DEFAULT_SECTION_BUDGETS = {
-    "prefix": 3600,
-    "memory": 1600,
-    "relevant_memory": 1200,
-    "history": 5200,
+    "prefix": 12000,
+    "memory": 8000,
+    "relevant_memory": 6000,
+    "history": 80000,
 }
 DEFAULT_SECTION_FLOORS = {
-    "prefix": 1200,
-    "memory": 400,
-    "relevant_memory": 300,
-    "history": 1500,
+    "prefix": 3000,
+    "memory": 1000,
+    "relevant_memory": 750,
+    "history": 20000,
 }
+READ_FILE_RECENT_CHARS = 16000
+OTHER_TOOL_RECENT_CHARS = 4000
 # 当 prompt 超预算时，会优先压缩这些 section。
 DEFAULT_REDUCTION_ORDER = ("relevant_memory", "history", "memory", "prefix")
 SECTION_ORDER = ("prefix", "memory", "relevant_memory", "history", "current_request")
@@ -371,7 +373,14 @@ class ContextManager:
         for index, item in enumerate(history):
             recent = index >= recent_start
             if recent:
-                line_limit = 900
+                if item["role"] == "tool":
+                    line_limit = (
+                        READ_FILE_RECENT_CHARS
+                        if item["name"] == "read_file"
+                        else OTHER_TOOL_RECENT_CHARS
+                    )
+                else:
+                    line_limit = 900
                 entries.append(
                     {
                         "recent": True,

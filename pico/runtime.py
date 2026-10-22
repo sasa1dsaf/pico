@@ -59,8 +59,8 @@ class Pico:
         session=None,
         run_store=None,
         approval_policy="ask",
-        max_steps=6,
-        max_new_tokens=8192,
+        max_steps=32,
+        max_new_tokens=16384,
         depth=0,
         max_depth=1,
         read_only=False,
@@ -255,7 +255,10 @@ class Pico:
                 seen_reads.add(path)
 
             if item["role"] == "tool":
-                limit = 900 if recent else 180
+                if recent:
+                    limit = 16000 if item["name"] == "read_file" else 4000
+                else:
+                    limit = 180
                 lines.append(f"[tool:{item['name']}] {json.dumps(item['args'], sort_keys=True)}")
                 lines.append(clip(item["content"], limit))
             else:

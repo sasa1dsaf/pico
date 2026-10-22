@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 
-from .workspace import clip
+from .workspace import MAX_TOOL_OUTPUT, READ_FILE_OUTPUT_CHARS, clip
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,9 @@ class ToolExecutor:
                 ),
             )
 
-        if agent.repeated_tool_call(name, args):
+        # read_file is the one tool that legitimately needs to be re-read after
+        # context compression; other tools keep the loop guard.
+        if name != "read_file" and agent.repeated_tool_call(name, args):
             return ToolExecutionResult(
                 content=f"error: repeated identical tool call for {name}; choose a different tool or return a final answer",
                 metadata=_metadata(
@@ -112,7 +114,8 @@ class ToolExecutor:
         before_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else {}
         after_snapshot = before_snapshot
         try:
-            content = clip(tool["run"](args))
+            output_limit = READ_FILE_OUTPUT_CHARS if name == "read_file" else MAX_TOOL_OUTPUT
+            content = clip(tool["run"](args), output_limit)
             after_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else before_snapshot
             affected_paths, diff_summary = agent.diff_workspace_snapshots(before_snapshot, after_snapshot)
             workspace_changed = bool(affected_paths)
