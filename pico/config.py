@@ -30,6 +30,51 @@ def _parse_env_line(line):
     return name, _strip_quotes(value)
 
 
+def global_env_path():
+    """Return the user-level .env path, or None when it cannot be resolved.
+
+    PICO_GLOBAL_ENV takes precedence, followed by %APPDATA%\\pico\\.env on
+    Windows and $XDG_CONFIG_HOME/pico/.env (or ~/.config/pico/.env) elsewhere.
+    """
+    override = os.environ.get("PICO_GLOBAL_ENV")
+    if override:
+        return Path(os.path.expandvars(os.path.expanduser(override)))
+
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            return None
+        return Path(appdata) / "pico" / ".env"
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config_home).expanduser() if xdg_config_home else Path.home() / ".config"
+    return base / "pico" / ".env"
+
+
+def load_env_file(env_path, override=True):
+    if env_path is None:
+        return {}
+    env_path = Path(env_path)
+    if not env_path.exists():
+        return {}
+
+    loaded = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_env_line(line)
+        if parsed is None:
+            continue
+        name, value = parsed
+        loaded[name] = value
+        if override or name not in os.environ:
+            os.environ[name] = value
+    return loaded
+
+
+def load_global_env(override=False):
+    """Load user-level defaults without overriding existing OS variables."""
+    return load_env_file(global_env_path(), override=override)
+
+
 def find_project_env(start):
     current = Path(start).resolve()
     if current.is_file():
@@ -42,18 +87,13 @@ def find_project_env(start):
 
 
 def load_project_env(start, override=True):
-    env_path = find_project_env(start)
-    if env_path is None:
-        return {}
-    loaded = {}
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        parsed = _parse_env_line(line)
-        if parsed is None:
-            continue
-        name, value = parsed
-        loaded[name] = value
-        if override or name not in os.environ:
-            os.environ[name] = value
+    return load_env_file(find_project_env(start), override=override)
+
+
+def load_config_env(start):
+    """Load global defaults first, then let the nearest project .env win."""
+    loaded = load_global_env(override=False)
+    loaded.update(load_project_env(start, override=True))
     return loaded
 
 

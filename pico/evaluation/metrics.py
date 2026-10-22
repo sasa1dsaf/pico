@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from ..config import load_project_env, provider_env
+from ..config import load_config_env, provider_env
 from .evaluator import run_fixed_benchmark
 from ..providers.clients import AnthropicCompatibleModelClient, FakeModelClient, OpenAICompatibleModelClient
 from ..runtime import Pico, SessionStore
@@ -678,7 +678,7 @@ def _provider_summary_from_artifact(payload):
 
 
 def _provider_profile(provider):
-    load_project_env(Path.cwd())
+    load_config_env(Path.cwd())
     if provider == "gpt":
         api_key = provider_env(
             "PICO_OPENAI_API_KEY",
