@@ -13,6 +13,7 @@ class ToolContext:
     depth: int
     max_depth: int
     spawn_delegate: Callable[[dict], str]
+    memory_store: object | None = None
 
     def path(self, raw_path):
         return self.path_resolver(str(raw_path))

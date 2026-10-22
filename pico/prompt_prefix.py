@@ -47,6 +47,7 @@ def build_prompt_prefix(workspace, tools, built_at=None):
             '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
             '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
             '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
+            '<tool>{"name":"remember","args":{"name":"user-prefers-tofu","description":"User likes eating tofu","content":"User likes eating tofu.","type":"user","tags":"preference,food"}}</tool>',
             '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
             "<final>Done.</final>",
         ]
@@ -75,6 +76,10 @@ def build_prompt_prefix(workspace, tools, built_at=None):
         - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
         - After reading a file, prefer patch_file or write_file over reading it again.
         - Do not re-read the same file range unless the file changed or you need a different range.
+        - Use the remember tool when the user states a stable preference, decision, project convention, or dependency.
+        - Never claim you remembered something without calling remember.
+        - Do not store secrets, transient task state, or facts already obvious from the repository.
+        - The Memory section contains a durable memory index; use read_file on the listed items/... path when details are needed.
         - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.
 
         Tools:

@@ -42,6 +42,17 @@ BASE_TOOL_SPECS = {
         "risky": True,
         "description": "Replace one exact text block in a file.",
     },
+    "remember": {
+        "schema": {
+            "name": "str",
+            "description": "str",
+            "content": "str",
+            "type": "str='user'",
+            "tags": "str=''",
+        },
+        "risky": False,
+        "description": "Save or update a durable memory item for stable preferences, decisions, conventions, or dependencies.",
+    },
 }
 
 DELEGATE_TOOL_SPEC = {
@@ -61,6 +72,7 @@ TOOL_EXAMPLES = {
     "run_shell": '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
     "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
     "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
+    "remember": '<tool>{"name":"remember","args":{"name":"user-prefers-tofu","description":"User likes eating tofu","content":"User likes eating tofu.","type":"user","tags":"preference,food"}}</tool>',
     "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
 }
 
@@ -141,6 +153,14 @@ def validate_tool(context, name, args):
         count = text.count(old_text)
         if count != 1:
             raise ValueError(f"old_text must occur exactly once, found {count}")
+        return
+
+    if name == "remember":
+        if context.memory_store is None:
+            raise ValueError("durable memory is not available")
+        for key in ("name", "description", "content"):
+            if not str(args.get(key, "")).strip():
+                raise ValueError(f"{key} must not be empty")
         return
 
     if name == "delegate":
@@ -303,6 +323,24 @@ def tool_patch_file(context, args):
     return f"patched {path.relative_to(context.root)}"
 
 
+def tool_remember(context, args):
+    if context.memory_store is None:
+        raise ValueError("durable memory is not available")
+    name = str(args.get("name", "")).strip()
+    description = str(args.get("description", "")).strip()
+    content = str(args.get("content", "")).strip()
+    if not name or not description or not content:
+        raise ValueError("name, description and content must not be empty")
+    tags = [tag.strip() for tag in str(args.get("tags", "")).split(",") if tag.strip()]
+    return context.memory_store.remember(
+        name=name,
+        description=description,
+        content=content,
+        type=str(args.get("type", "user")).strip() or "user",
+        tags=tags,
+    )
+
+
 def tool_delegate(context, args):
     if context.depth >= context.max_depth:
         raise ValueError("delegate depth exceeded")
@@ -319,4 +357,5 @@ _TOOL_RUNNERS = {
     "run_shell": tool_run_shell,
     "write_file": tool_write_file,
     "patch_file": tool_patch_file,
+    "remember": tool_remember,
 }

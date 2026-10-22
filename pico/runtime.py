@@ -500,6 +500,11 @@ class Pico:
                 break
         return promotions, rejections
 
+    def has_durable_items(self):
+        store = getattr(self.memory, "item_store", None)
+        items_dir = getattr(store, "items_dir", None)
+        return bool(items_dir and items_dir.exists() and any(items_dir.glob("*.md")))
+
     def promote_durable_memory(self, user_message, final_answer):
         promotions, rejections = self.extract_durable_promotions(user_message, final_answer)
         promoted, superseded = self.memory.promote_durable(promotions)
@@ -593,6 +598,7 @@ class Pico:
             depth=self.depth,
             max_depth=self.max_depth,
             spawn_delegate=self.spawn_delegate,
+            memory_store=self.memory.item_store,
         )
 
     def spawn_delegate(self, args):

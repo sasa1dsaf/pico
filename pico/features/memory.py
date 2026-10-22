@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from ..workspace import clip, now
+from .durable_memory import MemoryStore
 
 WORKING_FILE_LIMIT = 8
 EPISODIC_NOTE_LIMIT = 12
@@ -583,6 +584,16 @@ def render_memory_text(state, workspace_root=None):
     lines.append(f"- episodic_notes: {len(state['episodic_notes'])}")
     durable_topics = state.get("durable_topics", [])
     lines.append(f"- durable_topics: {', '.join(durable_topics) or '-'}")
+    durable_index = (
+        MemoryStore(Path(workspace_root) / ".pico" / "memory").index_text()
+        if workspace_root is not None
+        else "-"
+    )
+    lines.append("- durable_memory_index:")
+    if durable_index == "-":
+        lines.append("  - -")
+    else:
+        lines.extend(f"  {line}" for line in durable_index.splitlines())
     return "\n".join(lines)
 
 
@@ -601,6 +612,7 @@ class LayeredMemory:
         self.workspace_root = workspace_root
         self.state = normalize_memory_state(state, workspace_root)
         self.durable_store = DurableMemoryStore(Path(workspace_root) / ".pico" / "memory") if workspace_root is not None else None
+        self.item_store = MemoryStore(Path(workspace_root) / ".pico" / "memory") if workspace_root is not None else None
 
     def to_dict(self):
         self.state = normalize_memory_state(self.state, self.workspace_root)
