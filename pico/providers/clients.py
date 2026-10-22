@@ -11,6 +11,8 @@ from http.client import RemoteDisconnected
 import urllib.error
 import urllib.request
 
+from .native import parse_native_turn
+
 OPENAI_COMPATIBLE_USER_AGENT = "pico/0.1"
 
 
@@ -413,12 +415,24 @@ class AnthropicCompatibleModelClient:
         if self.thinking is not None:
             payload["thinking"] = dict(self.thinking)
 
+        data = self._post_messages(payload)
+        self.last_completion_metadata = _extract_anthropic_metadata(data)
+        text = _extract_anthropic_text(data)
+        if text:
+            return text
+        stop_reason = self.last_completion_metadata["stop_reason"] or "unknown"
+        content_types = ",".join(self.last_completion_metadata["content_block_types"]) or "none"
+        raise RuntimeError(
+            "Anthropic-compatible response ended before a text block "
+            f"(stop_reason={stop_reason}, content_types={content_types})"
+        )
+
+    def _post_messages(self, payload):
         headers = {
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
         }
-
         request = urllib.request.Request(
             self.base_url + "/messages",
             data=json.dumps(payload).encode("utf-8"),
@@ -455,13 +469,28 @@ class AnthropicCompatibleModelClient:
             ) from exc
         if data.get("error"):
             raise RuntimeError(f"Anthropic-compatible error: {data['error']}")
+        return data
+
+    def complete_native(self, system, messages, tools, max_new_tokens, tool_choice=None):
+        self.last_completion_metadata = {}
+        payload = {
+            "model": self.model,
+            "system": system,
+            "messages": messages,
+            "max_tokens": max_new_tokens,
+            "stream": False,
+            "tools": tools,
+        }
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.thinking is not None:
+            payload["thinking"] = dict(self.thinking)
+
+        data = self._post_messages(payload)
         self.last_completion_metadata = _extract_anthropic_metadata(data)
-        text = _extract_anthropic_text(data)
-        if text:
-            return text
-        stop_reason = self.last_completion_metadata["stop_reason"] or "unknown"
-        content_types = ",".join(self.last_completion_metadata["content_block_types"]) or "none"
-        raise RuntimeError(
-            "Anthropic-compatible response ended before a text block "
-            f"(stop_reason={stop_reason}, content_types={content_types})"
-        )
+        try:
+            return parse_native_turn(data)
+        except ValueError as exc:
+            raise RuntimeError(f"Anthropic-compatible malformed tool_use: {exc}") from exc

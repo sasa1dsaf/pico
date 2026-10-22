@@ -69,6 +69,7 @@ class Pico:
         feature_flags=None,
         allowed_tools=None,
         progress=None,
+        tool_protocol="text",
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -87,6 +88,7 @@ class Pico:
             self.feature_flags.update({str(key): bool(value) for key, value in feature_flags.items()})
         self.allowed_tools = self._normalize_allowed_tools(allowed_tools)
         self.progress = progress
+        self.tool_protocol = str(tool_protocol).strip() or "text"
         self.run_store = run_store or RunStore(Path(workspace.repo_root) / ".pico" / "runs")
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
@@ -206,7 +208,11 @@ class Pico:
         return tool_signature(self.tools)
 
     def build_prefix(self):
-        return build_prompt_prefix(workspace=self.workspace, tools=self.tools)
+        return build_prompt_prefix(
+            workspace=self.workspace,
+            tools=self.tools,
+            native_tools=self.tool_protocol == "native",
+        )
 
     def _apply_prefix_state(self, prefix_state):
         self.prefix_state = prefix_state
@@ -235,7 +241,9 @@ class Pico:
         }
         return dict(self._last_prefix_refresh)
 
-    def memory_text(self):
+    def memory_text(self, exclude_paths=()):
+        if exclude_paths:
+            return self.memory.render_memory_text(exclude_paths=exclude_paths)
         return self.memory.render_memory_text()
 
     def history_text(self):
@@ -517,7 +525,10 @@ class Pico:
     def ask(self, user_message):
         from .agent_loop import AgentLoop
 
-        return AgentLoop(self).run(user_message)
+        loop = AgentLoop(self)
+        if self.tool_protocol == "native" and hasattr(self.model_client, "complete_native"):
+            return loop.run_native(user_message)
+        return loop.run(user_message)
 
     def execute_tool(self, name, args):
         result = self.tool_executor.execute(name, args)

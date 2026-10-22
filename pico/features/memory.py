@@ -559,10 +559,11 @@ def retrieval_view(state, query, limit=3, workspace_root=None):
     return "\n".join(lines)
 
 
-def render_memory_text(state, workspace_root=None):
+def render_memory_text(state, workspace_root=None, exclude_paths=()):
     state = normalize_memory_state(state, workspace_root)
     # 这里渲染的是给模型看的紧凑“仪表盘”，不是完整回放。
     # 笔记正文默认不展开，只有在相关召回时才按需拿出来。
+    excluded = {str(path) for path in exclude_paths}
     lines = [
         "Memory:",
         f"- task: {state['working']['task_summary'] or '-'}",
@@ -571,6 +572,8 @@ def render_memory_text(state, workspace_root=None):
 
     summaries = []
     for path in state["working"]["recent_files"][:FILE_SUMMARY_LIMIT]:
+        if path in excluded:
+            continue
         summary = state["file_summaries"].get(path, {})
         current_freshness = file_freshness(path, workspace_root)
         if summary.get("summary", "") and summary.get("freshness") == current_freshness:
@@ -664,8 +667,8 @@ class LayeredMemory:
     def retrieval_view(self, query, limit=3):
         return retrieval_view(self.state, query, limit=limit, workspace_root=self.workspace_root)
 
-    def render_memory_text(self):
-        return render_memory_text(self.state, self.workspace_root)
+    def render_memory_text(self, exclude_paths=()):
+        return render_memory_text(self.state, self.workspace_root, exclude_paths=exclude_paths)
 
     def promote_durable(self, promotions):
         if self.durable_store is None:

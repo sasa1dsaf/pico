@@ -3,6 +3,7 @@
 import time
 
 from .checkpoint import CHECKPOINT_NONE_STATUS, CHECKPOINT_PARTIAL_STALE_STATUS, CHECKPOINT_WORKSPACE_MISMATCH_STATUS
+from .providers.native import to_json_schema
 from .task_state import TaskState
 from .workspace import clip, now
 
@@ -353,3 +354,8 @@ class AgentLoop:
         )
         agent.run_store.write_report(task_state, agent.redact_artifact(agent.build_report(task_state)))
         return final
+
+    def run_native(self, user_message):
+        from .native_loop import run_native_loop
+
+        return run_native_loop(self, user_message)

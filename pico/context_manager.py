@@ -59,6 +59,15 @@ class SectionRender:
         return len(self.rendered)
 
 
+@dataclass
+class NativeSections:
+    system_text: str
+    memory_text: str
+    history_text: str
+    current_request: str
+    metadata: dict
+
+
 class ContextManager:
     def __init__(
         self,
@@ -182,6 +191,116 @@ class ContextManager:
             section_texts=section_texts,
         )
         return prompt, metadata
+
+    def build_native(self, user_message, exclude_paths=()):
+        """Build separate system/memory/history sections for native tool calling."""
+        user_message = str(user_message)
+        refresh = self.agent.refresh_prefix()
+        self.agent.resume_state = self.agent.evaluate_resume_state()
+
+        memory_enabled = True
+        relevant_memory_enabled = True
+        if hasattr(self.agent, "feature_enabled"):
+            memory_enabled = self.agent.feature_enabled("memory")
+            relevant_memory_enabled = self.agent.feature_enabled("relevant_memory")
+
+        memory_text = (
+            "Memory:\n- disabled"
+            if not memory_enabled
+            else str(self.agent.memory_text(exclude_paths=exclude_paths))
+        )
+        checkpoint_text = ""
+        if hasattr(self.agent, "render_checkpoint_text"):
+            checkpoint_text = str(self.agent.render_checkpoint_text() or "").strip()
+        if checkpoint_text:
+            memory_text = memory_text + "\n\n" + checkpoint_text
+
+        selected_notes = []
+        if (
+            memory_enabled
+            and relevant_memory_enabled
+            and hasattr(self.agent, "memory")
+            and hasattr(self.agent.memory, "retrieval_candidates")
+        ):
+            selected_notes = self.agent.memory.retrieval_candidates(
+                user_message, limit=RELEVANT_MEMORY_LIMIT
+            )
+        relevant_render = self._render_relevant_memory(
+            selected_notes, int(self.section_budgets.get("relevant_memory", 0))
+        )
+        memory_text = memory_text + "\n\n" + relevant_render.rendered
+
+        history_render = self._render_history_section(
+            int(self.section_budgets.get("history", 0))
+        )
+        system_text = str(getattr(self.agent, "prefix", ""))
+
+        metadata = {
+            "protocol": "native",
+            "prompt_chars": len(system_text)
+            + len(memory_text)
+            + len(history_render.rendered)
+            + len(user_message),
+            "system_chars": len(system_text),
+            "memory_chars": len(memory_text),
+            "history_chars": len(history_render.rendered),
+            "request_chars": len(user_message),
+            "tool_count": len(self.agent.tools),
+            "prefix_hash": self.agent.prefix_state.hash,
+            "prompt_cache_key": self.agent.prefix_state.hash,
+            "prompt_cache_supported": bool(
+                getattr(self.agent.model_client, "supports_prompt_cache", False)
+            ),
+            "workspace_fingerprint": self.agent.prefix_state.workspace_fingerprint,
+            "tool_signature": self.agent.prefix_state.tool_signature,
+            "workspace_changed": refresh["workspace_changed"],
+            "prefix_changed": refresh["prefix_changed"],
+            "resume_status": self.agent.resume_state.get("status", ""),
+            "stale_paths": list(self.agent.resume_state.get("stale_paths", [])),
+            "runtime_identity_mismatch_fields": list(
+                self.agent.resume_state.get("runtime_identity_mismatch_fields", [])
+            ),
+            "section_budgets": {
+                "system": None,
+                "memory": int(self.section_budgets.get("memory", 0)),
+                "relevant_memory": int(self.section_budgets.get("relevant_memory", 0)),
+                "history": int(self.section_budgets.get("history", 0)),
+            },
+            "sections": {
+                "system": {"chars": len(system_text)},
+                "memory": {"chars": len(memory_text)},
+                "history": {"chars": len(history_render.rendered)},
+                "current_request": {"chars": len(user_message), "text": user_message},
+            },
+            "relevant_memory": {
+                "limit": RELEVANT_MEMORY_LIMIT,
+                "selected_count": len(selected_notes),
+                "selected_notes": [note["text"] for note in selected_notes],
+                "selected_sources": [
+                    str(note.get("source", "")).strip() for note in selected_notes
+                ],
+                "selected_kinds": [
+                    str(note.get("kind", "episodic")).strip() or "episodic"
+                    for note in selected_notes
+                ],
+                "rendered_chars": relevant_render.rendered_chars,
+            },
+            "history": {
+                "rendered_chars": history_render.rendered_chars,
+                "raw_chars": history_render.raw_chars,
+                "rendered_entries": list(history_render.details.get("rendered_entries", [])),
+            },
+        }
+        if hasattr(self.agent, "detected_secret_env_summary"):
+            metadata.update(self.agent.detected_secret_env_summary())
+
+        return NativeSections(
+            system_text=system_text,
+            memory_text=memory_text,
+            history_text=history_render.rendered,
+            current_request=user_message,
+            metadata=metadata,
+        )
 
     def _render_sections_without_reduction(self, section_texts, selected_notes=None):
         selected_notes = selected_notes or []

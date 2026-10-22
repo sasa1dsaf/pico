@@ -79,6 +79,19 @@ def _effective_provider(args):
     return provider
 
 
+def _effective_tool_protocol(args):
+    protocol = getattr(args, "tool_protocol", None) or provider_env(
+        "PICO_TOOL_PROTOCOL", default="auto"
+    )
+    if protocol not in {"auto", "text", "native"}:
+        raise ValueError(
+            f"unknown tool protocol: {protocol}. expected one of: auto, text, native"
+        )
+    if protocol == "auto":
+        return "native" if _effective_provider(args) == "deepseek" else "text"
+    return protocol
+
+
 def _effective_model(args, provider):
     # 模型选择优先级：
     # 1. 用户显式传入 --model
@@ -249,6 +262,7 @@ def build_agent(args):
     configured_secret_names = _configured_secret_names(args)
     store = SessionStore(workspace.repo_root + "/.pico/sessions")
     model = _build_model_client(args)
+    tool_protocol = _effective_tool_protocol(args)
     session_id = args.resume
     if session_id == "latest":
         session_id = store.latest()
@@ -263,6 +277,7 @@ def build_agent(args):
             max_new_tokens=args.max_new_tokens,
             secret_env_names=configured_secret_names,
             progress=_emit_progress,
+            tool_protocol=tool_protocol,
         )
     return Pico(
         model_client=model,
@@ -273,6 +288,7 @@ def build_agent(args):
         max_new_tokens=args.max_new_tokens,
         secret_env_names=configured_secret_names,
         progress=_emit_progress,
+        tool_protocol=tool_protocol,
     )
 
 
@@ -300,6 +316,12 @@ def build_arg_parser():
     parser.add_argument("--openai-timeout", type=int, default=300, help="OpenAI-compatible request timeout in seconds.")
     parser.add_argument("--resume", default=None, help="Session id to resume or 'latest'.")
     parser.add_argument("--approval", choices=("ask", "auto", "never"), default="ask", help="Approval policy for risky tools.")
+    parser.add_argument(
+        "--tool-protocol",
+        choices=("auto", "text", "native"),
+        default=None,
+        help="Tool calling protocol. auto uses native for DeepSeek and text otherwise.",
+    )
     parser.add_argument(
         "--secret-env-name",
         dest="secret_env_names",
