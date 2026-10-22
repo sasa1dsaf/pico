@@ -97,4 +97,35 @@ def shell_env(env=None, allowlist=(), root="."):
     filtered["PWD"] = str(root)
     if "PATH" not in filtered and env.get("PATH"):
         filtered["PATH"] = env["PATH"]
+
+    if os.name == "nt":
+        # Tests and some launchers run with a sparse environment. cmd.exe and
+        # Winsock need these system paths even when the parent env is minimal.
+        system_drive = filtered.get("SystemDrive") or "C:"
+        system_root = (
+            filtered.get("SystemRoot")
+            or filtered.get("WINDIR")
+            or f"{system_drive}\\Windows"
+        )
+        filtered.setdefault("SystemDrive", system_drive)
+        filtered.setdefault("SystemRoot", system_root)
+        filtered.setdefault("WINDIR", system_root)
+        filtered.setdefault("ComSpec", f"{system_root}\\System32\\cmd.exe")
+        filtered.setdefault("COMSPEC", filtered["ComSpec"])
+        filtered.setdefault(
+            "PATHEXT",
+            ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC",
+        )
+        filtered.setdefault("TEMP", f"{system_root}\\Temp")
+        filtered.setdefault("TMP", filtered["TEMP"])
+        filtered.setdefault("HOME", str(root))
+        if not filtered.get("PATH"):
+            filtered["PATH"] = ";".join(
+                [
+                    f"{system_root}\\System32",
+                    system_root,
+                    f"{system_root}\\System32\\Wbem",
+                    f"{system_root}\\System32\\WindowsPowerShell\\v1.0",
+                ]
+            )
     return filtered

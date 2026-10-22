@@ -4,12 +4,17 @@
 如何做参数校验，以及最终如何执行，都是在这里定义的。
 """
 
+import os
 import shutil
 import subprocess
 import textwrap
 from functools import partial
 
 from .workspace import IGNORED_PATH_NAMES, READ_FILE_OUTPUT_CHARS
+
+# Cache the shell at import time. Tests may clear os.environ before running a
+# command, but the discovered Git Bash path remains usable.
+_WINDOWS_BASH = shutil.which("bash") if os.name == "nt" else None
 
 BASE_TOOL_SPECS = {
     "list_files": {
@@ -276,17 +281,30 @@ def tool_run_shell(context, args):
     timeout = int(args.get("timeout", 20))
     if timeout < 1 or timeout > 120:
         raise ValueError("timeout must be in [1, 120]")
-    result = subprocess.run(
-        command,
-        cwd=context.root,
-        shell=True,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        # 这里传入的是过滤后的环境变量，而不是直接继承整个父 shell 环境，
-        # 目的是减少敏感信息被意外带进命令执行环境的风险。
-        env=context.shell_env(),
-    )
+    shell_env = context.shell_env()
+    if os.name == "nt" and _WINDOWS_BASH:
+        # Use Git Bash for POSIX-style commands on Windows. Falling back to
+        # cmd.exe makes commands like `printf` and quoted `python -c` fail.
+        result = subprocess.run(
+            [_WINDOWS_BASH, "--noprofile", "--norc", "-c", command],
+            cwd=context.root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=shell_env,
+        )
+    else:
+        result = subprocess.run(
+            command,
+            cwd=context.root,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            # 这里传入的是过滤后的环境变量，而不是直接继承整个父 shell 环境，
+            # 目的是减少敏感信息被意外带进命令执行环境的风险。
+            env=shell_env,
+        )
     return textwrap.dedent(
         f"""\
         exit_code: {result.returncode}

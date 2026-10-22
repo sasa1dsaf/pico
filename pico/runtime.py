@@ -26,7 +26,41 @@ from .tool_executor import ToolExecutor
 from . import tools as toolkit
 from .workspace import IGNORED_PATH_NAMES, MAX_HISTORY, WorkspaceContext, clip, now
 
-DEFAULT_SHELL_ENV_ALLOWLIST = ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "PATH", "PWD", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "USER")
+DEFAULT_SHELL_ENV_ALLOWLIST = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "PATH",
+    "PWD",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "USER",
+    # Windows system variables required by cmd.exe, subprocess and
+    # DLL/network initialization.
+    "SystemDrive",
+    "SystemRoot",
+    "WINDIR",
+    "ComSpec",
+    "COMSPEC",
+    "PATHEXT",
+    "USERPROFILE",
+    "USERNAME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "CommonProgramW6432",
+    "HOMEDRIVE",
+    "HOMEPATH",
+)
 DEFAULT_FEATURE_FLAGS = {
     "memory": True,
     "relevant_memory": True,

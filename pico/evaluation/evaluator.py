@@ -1,6 +1,7 @@
 import hashlib
 import json
 import locale as locale_module
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -489,13 +490,28 @@ class BenchmarkEvaluator:
         expected_artifact_exists = artifact_file.exists()
         artifact_digest = _digest_file(artifact_file) if expected_artifact_exists else ""
 
-        verifier = subprocess.run(
-            task["verifier"],
-            cwd=fixture_copy_root,
-            shell=True,
-            capture_output=True,
-            text=True,
-        )
+        verifier_command = task["verifier"]
+        try:
+            # POSIX-style quoted verifier commands (for example
+            # `python -c '...'`) must not go through cmd.exe on Windows.
+            verifier_args = shlex.split(verifier_command, posix=True)
+        except ValueError:
+            verifier_args = None
+        if verifier_args:
+            verifier = subprocess.run(
+                verifier_args,
+                cwd=fixture_copy_root,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            verifier = subprocess.run(
+                verifier_command,
+                cwd=fixture_copy_root,
+                shell=True,
+                capture_output=True,
+                text=True,
+            )
 
         within_budget = task_state.tool_steps <= int(task["step_budget"])
         verifier_passed = verifier.returncode == 0
