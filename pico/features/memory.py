@@ -589,6 +589,11 @@ def render_memory_text(state, workspace_root=None):
         if workspace_root is not None
         else "-"
     )
+    if durable_index != "-":
+        # MEMORY.md links are relative to .pico/memory, but read_file resolves
+        # paths from the workspace root. Rewrite them for the prompt.
+        durable_index = durable_index.replace("](items/", "](.pico/memory/items/")
+    lines.append("- durable_memory_base: .pico/memory")
     lines.append("- durable_memory_index:")
     if durable_index == "-":
         lines.append("  - -")

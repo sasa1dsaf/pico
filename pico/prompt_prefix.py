@@ -79,7 +79,7 @@ def build_prompt_prefix(workspace, tools, built_at=None):
         - Use the remember tool when the user states a stable preference, decision, project convention, or dependency.
         - Never claim you remembered something without calling remember.
         - Do not store secrets, transient task state, or facts already obvious from the repository.
-        - The Memory section contains a durable memory index; use read_file on the listed items/... path when details are needed.
+        - The Memory section contains a durable memory index with paths like `.pico/memory/items/foo.md`; use read_file on that workspace-relative path when details are needed.
         - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.
 
         Tools:

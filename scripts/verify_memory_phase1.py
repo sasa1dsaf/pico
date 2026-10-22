@@ -71,6 +71,11 @@ def main():
         prompt = agent2.prompt("我晚饭吃什么")
         check("recall: index in prompt", "durable_memory_index" in prompt)
         check("recall: item listed in prompt", "user-prefers-tofu" in prompt)
+        check(
+            "recall: workspace-relative item path",
+            ".pico/memory/items/user-prefers-tofu.md" in prompt,
+        )
+        check("recall: no bare items path", "](items/user-prefers-tofu.md)" not in prompt)
         check("tool: remember in prompt", "- remember(" in prompt)
 
         read_result = agent2.execute_tool(
@@ -78,6 +83,26 @@ def main():
             {"path": ".pico/memory/items/user-prefers-tofu.md"},
         ).content
         check("recall: item readable", "用户喜欢吃豆腐" in read_result)
+
+        # Simulate the model following the workspace-relative path from the index.
+        recall_agent, _ = make_agent(
+            root,
+            [
+                '<tool>{"name":"read_file","args":{"path":".pico/memory/items/user-prefers-tofu.md","start":1,"end":80}}</tool>',
+                "<final>用户喜欢吃豆腐。</final>",
+            ],
+        )
+        recall_answer = recall_agent.ask("我喜欢啥")
+        check("recall: scripted end-to-end", recall_answer == "用户喜欢吃豆腐。")
+        check(
+            "recall: read_file succeeded",
+            any(
+                item.get("role") == "tool"
+                and item.get("name") == "read_file"
+                and "用户喜欢吃豆腐" in str(item.get("content", ""))
+                for item in recall_agent.session["history"]
+            ),
+        )
 
         # Updating by the same name must not duplicate the index entry.
         original_item = item_path.read_text(encoding="utf-8")
