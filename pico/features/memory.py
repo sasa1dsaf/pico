@@ -5,6 +5,7 @@ session history 负责保存完整事件流；这个模块只保存更小的一�
 这样下一轮 prompt 还能接上上一轮，但不会被整段历史塞满。
 """
 
+import ast
 import hashlib
 from datetime import datetime
 import re
@@ -16,6 +17,9 @@ from .durable_memory import MemoryStore
 WORKING_FILE_LIMIT = 8
 EPISODIC_NOTE_LIMIT = 12
 FILE_SUMMARY_LIMIT = 6
+FILE_SUMMARY_CHARS = 300
+FILE_SCAN_CHARS = 512_000
+FILE_SUMMARY_CONST_LIMIT = 6
 
 DURABLE_TOPIC_DEFAULTS = {
     "project-conventions": {
@@ -503,18 +507,236 @@ def invalidate_stale_file_summaries(state, workspace_root=None):
     return state, invalidated
 
 
-def summarize_read_result(result, limit=180):
-    # 我们不会把完整文件内容塞进记忆层，
-    # 这里只保留足够提醒下一轮“刚刚读到了什么”的短摘要。
-    lines = [line.strip() for line in str(result).splitlines() if line.strip()]
-    if not lines:
-        return "(empty)"
-    if lines[0].startswith("# "):
-        lines = lines[1:]
-    if not lines:
-        return "(empty)"
-    summary = " | ".join(lines[:3])
-    return clip(summary, limit)
+def _read_scan_text(path, limit=FILE_SCAN_CHARS):
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(limit)
+    except OSError:
+        return ""
+
+
+def _leading_comment_or_line(text):
+    """Return the first meaningful prose line, preferring a leading comment."""
+    block = re.match(r"\s*/\*(.*?)\*/", text, re.S)
+    if block:
+        for line in block.group(1).splitlines():
+            line = line.strip().lstrip("*").strip()
+            if line:
+                return line
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#!"):
+            continue
+        if line.startswith("//"):
+            return line.lstrip("/").strip()
+        if line.startswith("#"):
+            return line.lstrip("#").strip()
+        return line
+    return ""
+
+
+def _regex_symbols(text, patterns):
+    names = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.M):
+            name = match.group(1)
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+_JS_SYMBOL_PATTERNS = (
+    r"export\s+default\s+(?:async\s+)?(?:function|class)\s+([A-Za-z_$][\w$]*)",
+    r"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)",
+    r"^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)",
+    r"^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)",
+)
+_GO_SYMBOL_PATTERNS = (
+    r"^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)",
+    r"^type\s+([A-Za-z_]\w*)\s+(?:struct|interface)",
+)
+_RS_SYMBOL_PATTERNS = (
+    r"^\s*pub\s+(?:async\s+)?fn\s+([A-Za-z_]\w*)",
+    r"^\s*pub\s+(?:struct|enum|trait|type)\s+([A-Za-z_]\w*)",
+)
+_JVM_SYMBOL_PATTERNS = (
+    r"^\s*(?:public\s+|private\s+|protected\s+)?(?:abstract\s+|final\s+|open\s+)?(?:class|interface|enum)\s+([A-Za-z_]\w*)",
+    r"^\s*(?:public\s+|private\s+|protected\s+|internal\s+)?fun\s+([A-Za-z_]\w*)",
+)
+_RB_SYMBOL_PATTERNS = (
+    r"^\s*def\s+([A-Za-z_]\w*[!?=]?)",
+    r"^\s*(?:class|module)\s+([A-Za-z_]\w*)",
+)
+_SH_SYMBOL_PATTERNS = (
+    r"^\s*function\s+([A-Za-z_]\w*)",
+    r"^\s*([A-Za-z_]\w*)\s*\(\)\s*\{",
+)
+
+
+def _display_symbol_name(display):
+    name = display
+    if name.startswith("class "):
+        name = name[len("class "):]
+    if name.endswith("()"):
+        name = name[:-2]
+    return name
+
+
+def _public_first(names):
+    # Stable sort: public API first, private helpers last. When the summary is
+    # trimmed, the least useful names (private helpers) go first.
+    return sorted(names, key=lambda display: _display_symbol_name(display).startswith("_"))
+
+
+def _raw_symbol_display_names(suffix, text):
+    if suffix == ".py":
+        # AST 解析失败时（超大文件被截断、语法错误）退回到正则。
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            return _regex_symbols(
+                text, (r"^class\s+(\w+)", r"^(?:async\s+)?def\s+(\w+)")
+            )
+        names = []
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                names.append(f"class {node.name}")
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.append(f"{node.name}()")
+        return names
+    if suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
+        return _regex_symbols(text, _JS_SYMBOL_PATTERNS)
+    if suffix == ".go":
+        return _regex_symbols(text, _GO_SYMBOL_PATTERNS)
+    if suffix == ".rs":
+        return _regex_symbols(text, _RS_SYMBOL_PATTERNS)
+    if suffix in {".java", ".kt", ".kts", ".scala"}:
+        return _regex_symbols(text, _JVM_SYMBOL_PATTERNS)
+    if suffix == ".rb":
+        return _regex_symbols(text, _RB_SYMBOL_PATTERNS)
+    if suffix in {".sh", ".bash"}:
+        return _regex_symbols(text, _SH_SYMBOL_PATTERNS)
+    return []
+
+
+def _symbol_display_names(suffix, text):
+    return _public_first(_raw_symbol_display_names(suffix, text))
+
+
+def _markdown_doc(text):
+    heading = ""
+    paragraph = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            if not heading:
+                heading = line.lstrip("#").strip()
+            continue
+        if not heading:
+            continue
+        if line.startswith(("```", "|", ">", "- ", "* ", "![")):
+            continue
+        paragraph = line
+        break
+    return " | ".join(part for part in (heading, paragraph) if part)
+
+
+def _toml_doc(text):
+    name = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', text)
+    description = re.search(r'(?m)^\s*description\s*=\s*"([^"]+)"', text)
+    return " | ".join(
+        part
+        for part in (
+            name.group(1) if name else "",
+            description.group(1) if description else "",
+        )
+        if part
+    )
+
+
+def _python_doc_and_constants(text):
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None, []
+    doc = ast.get_docstring(tree, clean=True) or ""
+    constants = []
+    for node in tree.body:
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id.isupper():
+                if target.id not in constants:
+                    constants.append(target.id)
+    constants.sort(key=lambda name: name.startswith("_"))
+    return doc, constants
+
+
+def _compose_summary(head, definitions, constants, line_label, limit):
+    head = str(head or "").strip()
+    head = head.splitlines()[0].strip() if head else ""
+    if len(head) > 140:
+        head = head[:137] + "..."
+    for definition_count in range(len(definitions), -1, -1):
+        shown = definitions[:definition_count]
+        definition_text = ", ".join(shown)
+        hidden = len(definitions) - definition_count
+        if shown and hidden > 0:
+            definition_text += f" (+{hidden} more)"
+        candidates = constants[:FILE_SUMMARY_CONST_LIMIT]
+        for constant_count in range(len(candidates), -1, -1):
+            shown_constants = candidates[:constant_count]
+            constant_text = ", ".join(shown_constants)
+            hidden_constants = len(constants) - constant_count
+            if shown_constants and hidden_constants > 0:
+                constant_text += f" (+{hidden_constants} more)"
+            parts = [
+                part
+                for part in (
+                    head,
+                    f"defines: {definition_text}" if definition_text else "",
+                    f"consts: {constant_text}" if constant_text else "",
+                    line_label,
+                )
+                if part
+            ]
+            summary = " | ".join(parts)
+            if len(summary) <= limit:
+                return summary
+    parts = [part for part in (head, line_label) if part]
+    return clip(" | ".join(parts) or line_label, limit)
+
+
+def summarize_file(path, workspace_root=None, limit=FILE_SUMMARY_CHARS):
+    """Summarize what a file *implements*, independent of any read range."""
+    resolved = resolve_workspace_path(path, workspace_root)
+    if resolved is None or not resolved.is_file():
+        return ""
+    text = _read_scan_text(resolved)
+    if not text.strip():
+        return "(empty file)"
+    truncated = len(text) >= FILE_SCAN_CHARS
+    line_count = len(text.splitlines())
+    line_label = f"{line_count}+ lines" if truncated else f"{line_count} lines"
+    suffix = resolved.suffix.lower()
+
+    doc = _leading_comment_or_line(text)
+    constants = []
+    definitions = _symbol_display_names(suffix, text)
+    if suffix == ".py":
+        python_doc, constants = _python_doc_and_constants(text)
+        if python_doc:
+            doc = python_doc
+    elif suffix in {".md", ".markdown"}:
+        doc = _markdown_doc(text) or doc
+    elif suffix == ".toml":
+        doc = _toml_doc(text) or doc
+    return _compose_summary(doc, definitions, constants, line_label, limit)
 
 
 def retrieval_candidates(state, query, limit=3, workspace_root=None):
@@ -660,6 +882,30 @@ class LayeredMemory:
     def invalidate_stale_file_summaries(self):
         self.state, invalidated = invalidate_stale_file_summaries(self.state, self.workspace_root)
         return invalidated
+
+    def refresh_file_summary(self, path):
+        """Summarize the whole file, reusing the cache when content is unchanged.
+
+        Returns (summary, changed). `changed` is True only when the stored
+        summary was recomputed, so callers can avoid appending duplicate notes.
+        """
+        self.state = normalize_memory_state(self.state, self.workspace_root)
+        canonical = canonicalize_path(path, self.workspace_root).strip()
+        if not canonical:
+            return "", False
+        resolved = resolve_workspace_path(canonical, self.workspace_root)
+        if resolved is None or not resolved.is_file():
+            self.state = invalidate_file_summary(self.state, canonical, self.workspace_root)
+            return "", False
+        current_freshness = file_freshness(canonical, self.workspace_root)
+        existing = self.state["file_summaries"].get(canonical, {})
+        if existing and current_freshness is not None and existing.get("freshness") == current_freshness:
+            return str(existing.get("summary", "")).strip(), False
+        summary = summarize_file(canonical, self.workspace_root)
+        if not summary:
+            return "", False
+        self.state = set_file_summary(self.state, canonical, summary, self.workspace_root)
+        return summary, True
 
     def retrieval_candidates(self, query, limit=3):
         return retrieval_candidates(self.state, query, limit=limit, workspace_root=self.workspace_root)

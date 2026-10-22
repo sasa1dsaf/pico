@@ -465,9 +465,12 @@ class Pico:
         if name in {"read_file", "write_file", "patch_file"}:
             self.memory.remember_file(canonical_path)
         if name == "read_file":
-            summary = memorylib.summarize_read_result(result)
-            self.memory.set_file_summary(canonical_path, summary)
-            self.memory.append_note(summary, tags=(canonical_path,), source=canonical_path)
+            # The summary describes the whole file, never the requested line
+            # range. Reading a middle chunk must not overwrite it with that
+            # chunk's first lines.
+            summary, changed = self.memory.refresh_file_summary(canonical_path)
+            if changed and summary:
+                self.memory.append_note(summary, tags=(canonical_path,), source=canonical_path)
         elif name in {"write_file", "patch_file"}:
             self.memory.invalidate_file_summary(canonical_path)
 
