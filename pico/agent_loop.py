@@ -80,6 +80,12 @@ class AgentLoop:
         agent.last_completion_metadata = completion_metadata
         agent.last_prompt_metadata = prompt_metadata
         kind, payload = agent.parse(raw)
+        if kind == "retry" and str(completion_metadata.get("stop_reason", "")) == "max_tokens":
+            payload = agent.retry_notice(
+                "previous response was truncated at the max output token limit. "
+                "Do not explain or plan; reply with exactly one <tool>...</tool> call "
+                "or one <final>...</final> answer"
+            )
         agent.emit_trace(
             task_state,
             "model_parsed",
@@ -254,6 +260,15 @@ class AgentLoop:
                 continue
 
             if kind == "retry":
+                stop_reason = str((agent.last_completion_metadata or {}).get("stop_reason", ""))
+                reason = (
+                    "output truncated at max_new_tokens"
+                    if stop_reason == "max_tokens"
+                    else "malformed model output"
+                )
+                agent.emit_progress(
+                    f"[pico] retry {attempts}/{max_attempts}: {reason}; retrying..."
+                )
                 agent.record({"role": "assistant", "content": payload, "created_at": now()})
                 agent.run_store.write_task_state(task_state)
                 continue
@@ -262,6 +277,9 @@ class AgentLoop:
             return self._finish_success(task_state, user_message, final, run_started_at)
 
         if tool_steps >= agent.max_steps:
+            agent.emit_progress(
+                f"[pico] tool budget exhausted after {tool_steps} steps; requesting a final answer..."
+            )
             task_state.record_attempt()
             agent.run_store.write_task_state(task_state)
             prompt_started_at = time.monotonic()

@@ -60,7 +60,7 @@ class Pico:
         run_store=None,
         approval_policy="ask",
         max_steps=6,
-        max_new_tokens=512,
+        max_new_tokens=8192,
         depth=0,
         max_depth=1,
         read_only=False,
@@ -68,6 +68,7 @@ class Pico:
         secret_env_names=None,
         feature_flags=None,
         allowed_tools=None,
+        progress=None,
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -85,6 +86,7 @@ class Pico:
         if feature_flags:
             self.feature_flags.update({str(key): bool(value) for key, value in feature_flags.items()})
         self.allowed_tools = self._normalize_allowed_tools(allowed_tools)
+        self.progress = progress
         self.run_store = run_store or RunStore(Path(workspace.repo_root) / ".pico" / "runs")
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
@@ -344,6 +346,11 @@ class Pico:
         # trace 是运行中的逐事件时间线，适合回答“这一轮 agent 到底做了什么”。
         self.run_store.append_trace(task_state, payload)
         return payload
+
+    def emit_progress(self, message):
+        if self.progress is None:
+            return
+        self.progress(str(message))
 
     def capture_workspace_snapshot(self):
         snapshot = {}
