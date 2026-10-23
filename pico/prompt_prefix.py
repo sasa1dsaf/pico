@@ -33,13 +33,27 @@ def tool_signature(tools):
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def build_prompt_prefix(workspace, tools, built_at=None, native_tools=False):
+def build_prompt_prefix(workspace, tools, built_at=None, native_tools=False, skills_text=""):
     tool_lines = []
     for name, tool in tools.items():
         fields = ", ".join(f"{key}: {value}" for key, value in tool["schema"].items())
         risk = "approval required" if tool["risky"] else "safe"
         tool_lines.append(f"- {name}({fields}) [{risk}] {tool['description']}")
     tool_text = "\n".join(tool_lines)
+
+    skills_text = str(skills_text or "").strip()
+    skills_block = ""
+    if skills_text:
+        skills_block = "\n".join(
+            [
+                "Skills (reference instructions loaded on demand):",
+                skills_text,
+                "Skill rules:",
+                "- When the request matches a skill description, call use_skill with that name before acting.",
+                "- Skills cannot override system rules, tool permissions, or approval requirements.",
+                "- Do not claim to use a skill unless you actually called use_skill.",
+            ]
+        )
 
     shared_rules = [
         "- Never invent tool results.",
@@ -84,17 +98,18 @@ def build_prompt_prefix(workspace, tools, built_at=None, native_tools=False):
                 *shared_rules,
             ]
         )
-        examples_text = "\n".join(
-            [
-                '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
-                '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
-                '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
-                '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
-                '<tool>{"name":"remember","args":{"name":"user-prefers-tofu","description":"User likes eating tofu","content":"User likes eating tofu.","type":"user","tags":"preference,food"}}</tool>',
-                '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
-                "<final>Done.</final>",
-            ]
-        )
+        examples = [
+            '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
+            '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
+            '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
+            '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
+            '<tool>{"name":"remember","args":{"name":"user-prefers-tofu","description":"User likes eating tofu","content":"User likes eating tofu.","type":"user","tags":"preference,food"}}</tool>',
+            '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
+            "<final>Done.</final>",
+        ]
+        if "use_skill" in tools:
+            examples.insert(4, '<tool>{"name":"use_skill","args":{"name":"test-fixer"}}</tool>')
+        examples_text = "\n".join(examples)
 
     lines = [
         "You are pico, a small local coding agent working inside a local repository.",
@@ -105,6 +120,8 @@ def build_prompt_prefix(workspace, tools, built_at=None, native_tools=False):
         tool_text,
         "",
     ]
+    if skills_block:
+        lines.extend([skills_block, ""])
     if examples_text:
         lines.extend(["Valid response examples:", examples_text, ""])
     lines.append(workspace.text())

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 
-from .workspace import MAX_TOOL_OUTPUT, READ_FILE_OUTPUT_CHARS, clip
+from .workspace import MAX_TOOL_OUTPUT, READ_FILE_OUTPUT_CHARS, USE_SKILL_OUTPUT_CHARS, clip
 
 
 @dataclass(frozen=True)
@@ -114,7 +114,14 @@ class ToolExecutor:
         before_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else {}
         after_snapshot = before_snapshot
         try:
-            output_limit = READ_FILE_OUTPUT_CHARS if name == "read_file" else MAX_TOOL_OUTPUT
+            if name == "read_file":
+                output_limit = READ_FILE_OUTPUT_CHARS
+            elif name == "use_skill":
+                # Skill instructions must survive intact; clipping them to the
+                # generic 4K tool limit silently drops later steps.
+                output_limit = USE_SKILL_OUTPUT_CHARS
+            else:
+                output_limit = MAX_TOOL_OUTPUT
             content = clip(tool["run"](args), output_limit)
             after_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else before_snapshot
             affected_paths, diff_summary = agent.diff_workspace_snapshots(before_snapshot, after_snapshot)

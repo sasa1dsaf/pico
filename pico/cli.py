@@ -10,10 +10,12 @@ import os
 import shutil
 import sys
 import textwrap
+from pathlib import Path
 
 from .config import load_config_env, provider_env
 from .providers.clients import AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
 from .runtime import Pico, SessionStore
+from .skills import SkillRegistry
 from .workspace import WorkspaceContext, middle
 
 DEFAULT_SECRET_ENV_NAMES = (
@@ -45,6 +47,8 @@ HELP_DETAILS = textwrap.dedent(
     Commands:
     /help    Show this help message.
     /memory  Show the agent's distilled working memory.
+    /skills  List discovered skills.
+    /skill   Load a skill into the next request: /skill <name>.
     /session Show the path to the saved session file.
     /reset   Clear the current session history and memory.
     /exit    Exit the agent.
@@ -278,6 +282,7 @@ def build_agent(args):
             secret_env_names=configured_secret_names,
             progress=_emit_progress,
             tool_protocol=tool_protocol,
+            skills_dirs=getattr(args, "skills_dirs", None),
         )
     return Pico(
         model_client=model,
@@ -289,6 +294,7 @@ def build_agent(args):
         secret_env_names=configured_secret_names,
         progress=_emit_progress,
         tool_protocol=tool_protocol,
+        skills_dirs=getattr(args, "skills_dirs", None),
     )
 
 
@@ -331,6 +337,14 @@ def build_arg_parser():
     )
     parser.add_argument("--max-steps", type=int, default=32, help="Maximum tool/model iterations per request.")
     parser.add_argument("--max-new-tokens", type=int, default=16384, help="Maximum model output tokens per step.")
+    parser.add_argument(
+        "--skills-dir",
+        dest="skills_dirs",
+        action="append",
+        default=[],
+        help="Additional skills directory (repeatable).",
+    )
+    parser.add_argument("--list-skills", action="store_true", help="List discovered skills and exit.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to Ollama.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to Ollama.")
     return parser
@@ -338,6 +352,15 @@ def build_arg_parser():
 
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
+    if args.list_skills:
+        workspace_root = Path(args.cwd).resolve()
+        load_config_env(workspace_root)
+        registry = SkillRegistry(
+            extra_dirs=getattr(args, "skills_dirs", None),
+            base_dir=workspace_root,
+        )
+        print(registry.list_text())
+        return 0
     agent = build_agent(args)
 
     model = getattr(agent.model_client, "model", getattr(args, "model", DEFAULT_OLLAMA_MODEL))
@@ -356,6 +379,7 @@ def main(argv=None):
                 return 1
         return 0
 
+    pending_skill = None
     while True:
         # 交互模式：每次读取一条用户输入，交给同一个 agent，
         # 因此 session history 和 working memory 会跨轮延续。
@@ -375,16 +399,44 @@ def main(argv=None):
         if user_input == "/memory":
             print(agent.memory_text())
             continue
+        if user_input == "/skills":
+            print(agent.skills.list_text())
+            continue
+        if user_input == "/skill" or user_input.startswith("/skill "):
+            _, _, skill_name = user_input.partition(" ")
+            skill_name = skill_name.strip()
+            if not skill_name:
+                print("usage: /skill <name>")
+                continue
+            try:
+                skill_text = agent.skills.render(skill_name)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                continue
+            pending_skill = (skill_name, skill_text)
+            print(f"loaded skill: {skill_name} (will be included in the next request)")
+            continue
         if user_input == "/session":
             print(agent.session_path)
             continue
         if user_input == "/reset":
             agent.reset()
+            pending_skill = None
             print("session reset")
             continue
 
+        prompt = user_input
+        if pending_skill is not None:
+            skill_name, skill_text = pending_skill
+            prompt = (
+                f'<loaded_skill name="{skill_name}">\n{skill_text}\n</loaded_skill>\n\n'
+                f"User request:\n{user_input}"
+            )
+
         print()
         try:
-            print(agent.ask(user_input))
+            print(agent.ask(prompt))
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
+            continue
+        pending_skill = None

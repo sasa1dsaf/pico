@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from .workspace import USE_SKILL_OUTPUT_CHARS
+
 
 DEFAULT_TOTAL_BUDGET = 128000
 DEFAULT_SECTION_BUDGETS = {
@@ -24,6 +26,7 @@ DEFAULT_SECTION_FLOORS = {
     "history": 20000,
 }
 READ_FILE_RECENT_CHARS = 16000
+USE_SKILL_RECENT_CHARS = USE_SKILL_OUTPUT_CHARS
 OTHER_TOOL_RECENT_CHARS = 4000
 # 当 prompt 超预算时，会优先压缩这些 section。
 DEFAULT_REDUCTION_ORDER = ("relevant_memory", "history", "memory", "prefix")
@@ -493,11 +496,14 @@ class ContextManager:
             recent = index >= recent_start
             if recent:
                 if item["role"] == "tool":
-                    line_limit = (
-                        READ_FILE_RECENT_CHARS
-                        if item["name"] == "read_file"
-                        else OTHER_TOOL_RECENT_CHARS
-                    )
+                    if item["name"] == "read_file":
+                        line_limit = READ_FILE_RECENT_CHARS
+                    elif item["name"] == "use_skill":
+                        # Skill bodies are instructions the model must follow;
+                        # clipping them to 4K would silently drop steps.
+                        line_limit = USE_SKILL_RECENT_CHARS
+                    else:
+                        line_limit = OTHER_TOOL_RECENT_CHARS
                 else:
                     line_limit = 900
                 entries.append(

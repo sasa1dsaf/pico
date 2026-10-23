@@ -21,6 +21,7 @@ from .prompt_prefix import build_prompt_prefix, tool_signature
 from .run_store import RunStore
 from .security import REDACTED_VALUE
 from .session_store import SessionStore
+from .skills import SkillRegistry
 from .tool_context import ToolContext
 from .tool_executor import ToolExecutor
 from . import tools as toolkit
@@ -104,6 +105,8 @@ class Pico:
         allowed_tools=None,
         progress=None,
         tool_protocol="text",
+        skills=None,
+        skills_dirs=None,
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -137,6 +140,13 @@ class Pico:
             workspace_root=self.root,
         )
         self.session["memory"] = self.memory.to_dict()
+        # Skills are read-only reference material discovered from the global
+        # skills directory and any explicit --skills-dir entries.
+        self.skills = (
+            skills
+            if skills is not None
+            else SkillRegistry(extra_dirs=skills_dirs or (), base_dir=self.root)
+        )
         self.tools = self._apply_tool_allowlist(self.build_tools())
         self.tool_executor = ToolExecutor(self)
         self.prefix_state = self.build_prefix()
@@ -246,6 +256,8 @@ class Pico:
             workspace=self.workspace,
             tools=self.tools,
             native_tools=self.tool_protocol == "native",
+            # Do not advertise skills when the tool allowlist removed use_skill.
+            skills_text=self.skills.index_text() if "use_skill" in self.tools else "",
         )
 
     def _apply_prefix_state(self, prefix_state):
@@ -264,13 +276,19 @@ class Pico:
         if workspace_changed:
             self.workspace = refreshed_workspace
 
-        prefix_state = self.build_prefix() if workspace_changed or force or previous_hash is None else self.prefix_state
+        # Skill files live outside the workspace fingerprint, so refresh them
+        # separately. A changed index must rebuild the cached prefix.
+        skills_changed = self.skills.refresh()
+
+        rebuild = workspace_changed or skills_changed or force or previous_hash is None
+        prefix_state = self.build_prefix() if rebuild else self.prefix_state
         prefix_changed = force or previous_hash != prefix_state.hash
         if prefix_changed:
             self._apply_prefix_state(prefix_state)
 
         self._last_prefix_refresh = {
             "workspace_changed": workspace_changed,
+            "skills_changed": skills_changed,
             "prefix_changed": prefix_changed,
         }
         return dict(self._last_prefix_refresh)
@@ -647,6 +665,7 @@ class Pico:
             max_depth=self.max_depth,
             spawn_delegate=self.spawn_delegate,
             memory_store=self.memory.item_store,
+            skills=self.skills,
         )
 
     def spawn_delegate(self, args):
@@ -664,6 +683,7 @@ class Pico:
             read_only=True,
             secret_env_names=self.secret_env_names,
             shell_env_allowlist=self.shell_env_allowlist,
+            skills=self.skills,
         )
         # 委派的目标是“调查”，不是“放权执行”。
         # 子 agent 以只读方式运行、步数更少，最后只把结论文本返回给父 agent。

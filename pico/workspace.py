@@ -13,6 +13,7 @@ from pathlib import Path
 
 MAX_TOOL_OUTPUT = 4000
 READ_FILE_OUTPUT_CHARS = 16000
+USE_SKILL_OUTPUT_CHARS = 18000
 MAX_HISTORY = 80000
 # 这些文件最可能直接影响 agent 的行动方式。
 # 我们不会预加载整个仓库，只会先给模型一小份“导航包”。
@@ -63,6 +64,8 @@ class WorkspaceContext:
                     cwd=cwd,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     check=True,
                     timeout=5,
                 )

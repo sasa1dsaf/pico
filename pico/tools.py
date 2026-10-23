@@ -58,6 +58,11 @@ BASE_TOOL_SPECS = {
         "risky": False,
         "description": "Save or update a durable memory item for stable preferences, decisions, conventions, or dependencies.",
     },
+    "use_skill": {
+        "schema": {"name": "str", "file": "str=''"},
+        "risky": False,
+        "description": "Load a skill's instructions by name, or read one of its bundled files.",
+    },
 }
 
 DELEGATE_TOOL_SPEC = {
@@ -78,6 +83,7 @@ TOOL_EXAMPLES = {
     "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
     "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
     "remember": '<tool>{"name":"remember","args":{"name":"user-prefers-tofu","description":"User likes eating tofu","content":"User likes eating tofu.","type":"user","tags":"preference,food"}}</tool>',
+    "use_skill": '<tool>{"name":"use_skill","args":{"name":"test-fixer"}}</tool>',
     "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
 }
 
@@ -166,6 +172,19 @@ def validate_tool(context, name, args):
         for key in ("name", "description", "content"):
             if not str(args.get(key, "")).strip():
                 raise ValueError(f"{key} must not be empty")
+        return
+
+    if name == "use_skill":
+        skill_name = str(args.get("name", "")).strip()
+        if not skill_name:
+            raise ValueError("name must not be empty")
+        if context.skills is None:
+            raise ValueError("skills are not available")
+        if context.skills.get(skill_name) is None:
+            raise ValueError(context.skills.unknown_skill_message(skill_name))
+        file_name = str(args.get("file", "") or "").strip()
+        if file_name:
+            context.skills.resource_path(skill_name, file_name)
         return
 
     if name == "delegate":
@@ -257,6 +276,8 @@ def tool_search(context, args):
             cwd=context.root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         return result.stdout.strip() or result.stderr.strip() or "(no matches)"
 
@@ -290,6 +311,8 @@ def tool_run_shell(context, args):
             cwd=context.root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             env=shell_env,
         )
@@ -300,6 +323,8 @@ def tool_run_shell(context, args):
             shell=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             # 这里传入的是过滤后的环境变量，而不是直接继承整个父 shell 环境，
             # 目的是减少敏感信息被意外带进命令执行环境的风险。
@@ -359,6 +384,16 @@ def tool_remember(context, args):
     )
 
 
+def tool_use_skill(context, args):
+    if context.skills is None:
+        raise ValueError("skills are not available")
+    name = str(args.get("name", "")).strip()
+    file_name = str(args.get("file", "") or "").strip()
+    if file_name:
+        return context.skills.read_resource(name, file_name)
+    return context.skills.render(name)
+
+
 def tool_delegate(context, args):
     if context.depth >= context.max_depth:
         raise ValueError("delegate depth exceeded")
@@ -376,4 +411,5 @@ _TOOL_RUNNERS = {
     "write_file": tool_write_file,
     "patch_file": tool_patch_file,
     "remember": tool_remember,
+    "use_skill": tool_use_skill,
 }

@@ -18,6 +18,7 @@
 - 模块入口是 `python -m pico`
 - 会话保存在 `.pico/sessions/`
 - 每次运行的工件保存在 `.pico/runs/<run_id>/`
+- 支持 Claude Code 兼容的 Skills（按需通过 `use_skill` 加载）
 - 支持四类模型后端：
   - Ollama
   - OpenAI 兼容 Responses API
@@ -77,6 +78,40 @@ uv run pico "inspect the test failures and propose a fix"
 
 ```bash
 python -m pico
+```
+
+## Skills
+
+pico 支持 Claude Code 兼容的技能包：每个技能是 `<name>/SKILL.md`，带 `name` / `description` 前置元数据。启动时只把名称和描述放进 prompt，模型匹配到任务后通过 `use_skill` 按需加载正文；技能目录里的附件用 `use_skill(name=..., file=...)` 读取。
+
+默认从用户级目录发现：
+
+- Windows：`%APPDATA%\pico\skills`
+- macOS/Linux：`~/.config/pico/skills`
+
+可以用 `--skills-dir` 追加目录（可重复），或先查看发现结果：
+
+```bash
+uv run pico --skills-dir ./my-skills
+uv run pico --list-skills
+```
+
+进入 REPL 后也可以直接操作技能：
+
+```text
+/skills        列出已发现的技能
+/skill <name>  把该技能正文注入下一条请求
+```
+
+技能文件示例：
+
+```text
+%APPDATA%\pico\skills\test-fixer\SKILL.md
+---
+name: test-fixer
+description: Use when a test fails and you need to reproduce and fix it.
+---
+先复现失败，再做最小修改，最后跑回归。
 ```
 
 ## 模型后端

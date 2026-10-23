@@ -51,6 +51,27 @@ def global_env_path():
     return base / "pico" / ".env"
 
 
+def global_skills_dir():
+    """Return the user-level skills directory, or None when unresolvable.
+
+    PICO_SKILLS_DIR takes precedence, followed by %APPDATA%\\pico\\skills on
+    Windows and $XDG_CONFIG_HOME/pico/skills (or ~/.config/pico/skills) elsewhere.
+    """
+    override = os.environ.get("PICO_SKILLS_DIR")
+    if override:
+        return Path(os.path.expandvars(os.path.expanduser(override)))
+
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            return None
+        return Path(appdata) / "pico" / "skills"
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config_home).expanduser() if xdg_config_home else Path.home() / ".config"
+    return base / "pico" / "skills"
+
+
 def load_env_file(env_path, override=True):
     if env_path is None:
         return {}
